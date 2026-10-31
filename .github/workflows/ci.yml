@@ -39,6 +39,6 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r requirements.txt
-      - run: scripts/start_kafka.sh "$RUNNER_TEMP/kafka"
+      - run: bash scripts/start_kafka.sh "$RUNNER_TEMP/kafka"
       - name: End-to-end test (real Kafka and Spark)
         run: KAFKA_BOOTSTRAP=localhost:9092 PYTHONPATH=src pytest -q tests/test_e2e.py
