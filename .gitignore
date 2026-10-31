@@ -1,0 +1,12 @@
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+lake/
+checkpoints/
+derby.log
+metastore_db/
+spark-warehouse/
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
