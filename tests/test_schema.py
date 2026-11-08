@@ -1,3 +1,5 @@
+import pytest
+
 from wikistream.schema import encode, is_valid, slim
 from wikistream.synthetic import BASE, scenario
 
@@ -41,6 +43,13 @@ def test_encode_keys_by_wiki():
 
 def test_is_valid():
     assert is_valid(slim(raw())) and not is_valid(None)
+
+
+@pytest.mark.parametrize("item", [None, [], "event", raw(wiki=None), raw(wiki=""), raw(type=" "),
+                                  raw(id=True), raw(id=1.5), raw(timestamp=False), raw(length=[1]),
+                                  raw(length={"new": float("inf")})])
+def test_malformed_feed_values_are_skipped_without_crashing(item):
+    assert slim(item) is None
 
 
 def test_scenario_is_consistent():
