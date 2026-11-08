@@ -5,6 +5,7 @@ set -euo pipefail
 DIR="${1:-$HOME/kafka-local}"
 VER=3.7.1
 mkdir -p "$DIR" && cd "$DIR"
+DIR="$(pwd -P)"
 if [ ! -d "kafka_2.13-$VER" ]; then
   for url in "https://archive.apache.org/dist/kafka/$VER/kafka_2.13-$VER.tgz" \
              "https://downloads.apache.org/kafka/$VER/kafka_2.13-$VER.tgz"; do
@@ -32,7 +33,8 @@ transaction.state.log.min.isr=1
 CFG
 rm -rf "$DIR/data"
 "$K/bin/kafka-storage.sh" format -t "$("$K/bin/kafka-storage.sh" random-uuid)" -c kraft.properties >/dev/null
-KAFKA_HEAP_OPTS="-Xmx1g" nohup "$K/bin/kafka-server-start.sh" kraft.properties > kafka.log 2>&1 < /dev/null &
+KAFKA_HEAP_OPTS="-Xmx1g" nohup "$K/bin/kafka-server-start.sh" "$DIR/kraft.properties" > kafka.log 2>&1 < /dev/null &
+echo "$!" > kafka.pid
 for _ in $(seq 1 60); do
   "$K/bin/kafka-topics.sh" --bootstrap-server localhost:9092 --list >/dev/null 2>&1 && { echo "Kafka is up on localhost:9092"; exit 0; }
   sleep 2
