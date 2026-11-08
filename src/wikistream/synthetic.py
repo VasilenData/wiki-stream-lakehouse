@@ -18,7 +18,7 @@ def scenario() -> tuple[list[tuple[bytes, bytes]], list[tuple[bytes, bytes]], di
     """Returns messages and the expected silver result.
 
     Minute 0: 6 unique edits on enwiki (2 bots) + 3 duplicates of ids already sent.
-    Minute 1: 4 edits on dewiki.
+    Minute 1: 4 edits on dewiki, deliberately reusing enwiki IDs 1 to 4.
     Then an event at +10 minutes advances the watermark (2 min), so minutes 0 and 1 close.
     Phase 2 (a later micro-batch, because Spark advances the watermark between batches):
     2 LATE events for minute 0 (older than the watermark) which must be dropped, plus
@@ -32,7 +32,7 @@ def scenario() -> tuple[list[tuple[bytes, bytes]], list[tuple[bytes, bytes]], di
         msgs.append(encode(make(dup, "enwiki", BASE + 5 * (dup - 1), bot=dup <= 2)))
     for k in range(4):
         uid += 1
-        msgs.append(encode(make(uid, "dewiki", BASE + 60 + 10 * k)))
+        msgs.append(encode(make(k + 1, "dewiki", BASE + 60 + 10 * k)))
     uid += 1
     msgs.append(encode(make(uid, "enwiki", BASE + 600)))  # advances the watermark
     phase2 = [encode(make(1000 + k, "enwiki", BASE + 20)) for k in range(2)]  # late

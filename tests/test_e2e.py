@@ -54,6 +54,8 @@ def test_pipeline_end_to_end():
             assert got[key] == val, (key, got)
         n_bronze = con.execute(f"SELECT count(*) FROM read_parquet('{d}/lake/bronze_events/**/*.parquet')").fetchone()[0]
         assert n_bronze == 6 + 4 + 1  # duplicates and late events removed
+        shared = con.execute(f"SELECT wiki FROM read_parquet('{d}/lake/bronze_events/**/*.parquet') WHERE id = 1").fetchall()
+        assert set(shared) == {("enwiki",), ("dewiki",)}  # rcid is local to a wiki
         n_dead = con.execute(f"SELECT count(*) FROM read_parquet('{d}/lake/dead_letters/*.parquet')").fetchone()[0]
         assert n_dead == 2
     finally:

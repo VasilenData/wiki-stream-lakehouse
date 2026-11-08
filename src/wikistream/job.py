@@ -2,7 +2,7 @@
 
 Design choices (see README):
 * Event-time windows with a watermark, so late events are handled by a rule, not by luck.
-* `dropDuplicatesWithinWatermark` on the event id, with dedupe state bounded by the watermark.
+* `dropDuplicatesWithinWatermark` on (wiki, event id), bounded by the watermark.
 * Records that fail parsing go to a dead-letter folder instead of crashing or vanishing.
 * Each file sink has its own checkpoint; the integration test covers checkpoint reuse.
 * Bronze follows watermarking/deduplication. Late records are not archived there.
@@ -51,7 +51,7 @@ def run(a: argparse.Namespace) -> None:
     events = (parsed.filter(ok).select("e.*")
               .withColumn("event_time", F.col("event_ts").cast("timestamp"))
               .withWatermark("event_time", a.watermark)
-              .dropDuplicatesWithinWatermark(["id"]))
+              .dropDuplicatesWithinWatermark(["wiki", "id"]))
 
     trig = {"availableNow": True} if a.once else {"processingTime": a.trigger}
     out = a.out

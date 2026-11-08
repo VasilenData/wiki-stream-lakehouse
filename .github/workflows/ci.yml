@@ -10,9 +10,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install ruff pytest
+      - run: pip install ruff pytest requests
       - run: ruff check .
-      - run: PYTHONPATH=src pytest -q tests/test_schema.py
+      - run: PYTHONPATH=src pytest -q tests/test_schema.py tests/test_producer.py
   terraform:
     runs-on: ubuntu-latest
     steps:
