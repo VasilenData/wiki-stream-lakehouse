@@ -8,7 +8,6 @@ import os
 import time
 
 import requests
-from confluent_kafka import Producer
 
 from .schema import TOPIC, encode, slim
 
@@ -37,32 +36,54 @@ def stream_events(url: str = URL):
             backoff = min(backoff * 2, 30)
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--bootstrap", default=os.getenv("KAFKA_BOOTSTRAP", "localhost:9092"))
-    ap.add_argument("--seconds", type=int, default=0, help="stop after N seconds (0 = run forever)")
-    a = ap.parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
-    # acks=all + idempotence: no duplicates from producer retries
-    p = Producer({"bootstrap.servers": a.bootstrap, "enable.idempotence": True, "acks": "all",
-                  "linger.ms": 50, "compression.type": "lz4"})
-    sent = skipped = 0
-    t0 = time.time()
-    for raw in stream_events():
+def publish(events, producer, seconds: int = 0) -> dict:
+    """Count broker acknowledgements; a queued record is not yet delivered."""
+    queued = delivered = skipped = 0
+    errors = []
+    started = time.monotonic()
+
+    def acknowledge(error, message):
+        nonlocal delivered
+        if error is not None:
+            errors.append(str(error))
+        else:
+            delivered += 1
+
+    for raw in events:
         rec = slim(raw)
         if rec is None:
             skipped += 1
         else:
-            k, v = encode(rec)
-            p.produce(TOPIC, key=k, value=v)
-            sent += 1
-        p.poll(0)
-        if sent and sent % 500 == 0:
-            log.info("sent=%d skipped=%d rate=%.1f/s", sent, skipped, sent / (time.time() - t0))
-        if a.seconds and time.time() - t0 > a.seconds:
+            key, value = encode(rec)
+            producer.produce(TOPIC, key=key, value=value, on_delivery=acknowledge)
+            queued += 1
+        producer.poll(0)
+        if errors or (seconds and time.monotonic() - started >= seconds):
             break
-    p.flush(10)
-    log.info("done sent=%d skipped=%d in %.0fs", sent, skipped, time.time() - t0)
+    outstanding = producer.flush(10)
+    if errors or outstanding or delivered != queued:
+        raise RuntimeError(f"Kafka delivery incomplete: queued={queued}, acknowledged={delivered}, "
+                           f"outstanding={outstanding}, errors={len(errors)}")
+    return {"queued": queued, "acknowledged": delivered, "skipped": skipped}
+
+
+def main() -> None:
+    from confluent_kafka import Producer
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--bootstrap", default=os.getenv("KAFKA_BOOTSTRAP", "localhost:9092"))
+    ap.add_argument("--seconds", type=int, default=0, help="stop after N seconds (0 = run forever)")
+    a = ap.parse_args()
+    if a.seconds < 0:
+        ap.error("--seconds must be non-negative")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+    # acks=all + idempotence: no duplicates from producer retries
+    p = Producer({"bootstrap.servers": a.bootstrap, "enable.idempotence": True, "acks": "all",
+                  "linger.ms": 50, "compression.type": "lz4"})
+    started = time.monotonic()
+    stats = publish(stream_events(), p, a.seconds)
+    log.info("done acknowledged=%d queued=%d skipped=%d in %.0fs", stats["acknowledged"],
+             stats["queued"], stats["skipped"], time.monotonic() - started)
 
 
 if __name__ == "__main__":
