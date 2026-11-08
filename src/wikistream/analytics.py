@@ -1,10 +1,12 @@
-"""Query the lake with DuckDB (no cluster needed). Works on local paths or s3:// with httpfs."""
+"""Query committed local Spark output with DuckDB; ignore uncommitted orphan files."""
 from __future__ import annotations
 
 import argparse
 import sys
 
 import duckdb
+
+from .files import committed_files
 
 QUERIES = {
     "top_wikis": """
@@ -24,8 +26,15 @@ QUERIES = {
 
 def connect(lake: str) -> duckdb.DuckDBPyConnection:
     con = duckdb.connect()
-    con.execute(f"CREATE VIEW bronze AS SELECT * FROM read_parquet('{lake}/bronze_events/**/*.parquet', hive_partitioning=true)")
-    con.execute(f"CREATE VIEW silver AS SELECT * FROM read_parquet('{lake}/silver_wiki_minute/*.parquet')")
+    try:
+        for view, folder in (("bronze", "bronze_events"), ("silver", "silver_wiki_minute")):
+            files = committed_files(f"{lake}/{folder}")
+            if not files:
+                raise ValueError(f'No committed data files in {folder}; windows may still be open')
+            con.read_parquet(files, hive_partitioning=True).create_view(view)
+    except BaseException:
+        con.close()
+        raise
     return con
 
 

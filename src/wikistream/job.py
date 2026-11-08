@@ -6,7 +6,8 @@ Design choices (see README):
 * Records that fail parsing go to a dead-letter folder instead of crashing or vanishing.
 * Each file sink has its own checkpoint; the integration test covers checkpoint reuse.
 * Bronze follows watermarking/deduplication. Late records are not archived there.
-* `failOnDataLoss=false` allows missing Kafka offsets to be skipped; see README for scope.
+* Missing Kafka offsets fail the query unless --allow-data-loss is explicitly selected.
+* raw_kafka archives key/value and Kafka offsets before parsing or watermarking.
 """
 from __future__ import annotations
 
@@ -39,15 +40,19 @@ def run(a: argparse.Namespace) -> None:
     spark = build_spark()
     spark.sparkContext.setLogLevel("WARN")
     raw = (spark.readStream.format("kafka")
-           .option("kafka.bootstrap.servers", a.bootstrap).option("subscribe", TOPIC)
-           .option("startingOffsets", a.starting_offsets).option("failOnDataLoss", "false")
+           .option("kafka.bootstrap.servers", a.bootstrap).option("subscribe", a.topic)
+           .option("startingOffsets", a.starting_offsets)
+           .option("failOnDataLoss", "false" if a.allow_data_loss else "true")
            .option("maxOffsetsPerTrigger", a.max_offsets).load())
 
-    parsed = (raw.select(F.col("value").cast("string").alias("json"))
+    parsed = (raw.select(F.col("value").cast("string").alias("json"),
+                        F.col("topic").alias("source_topic"), F.col("partition").alias("source_partition"),
+                        F.col("offset").alias("source_offset"))
               .withColumn("e", F.from_json("json", SCHEMA)))
     ok = F.col("e").isNotNull() & F.col("e.id").isNotNull() & F.col("e.wiki").isNotNull() & F.col("e.event_ts").isNotNull()
 
-    dead = parsed.filter(~ok).select("json", F.current_timestamp().alias("rejected_at"))
+    dead = parsed.filter(~ok).select("json", "source_topic", "source_partition", "source_offset",
+                                   F.current_timestamp().alias("rejected_at"))
     events = (parsed.filter(ok).select("e.*")
               .withColumn("event_time", F.col("event_ts").cast("timestamp"))
               .withWatermark("event_time", a.watermark)
@@ -63,6 +68,7 @@ def run(a: argparse.Namespace) -> None:
             w = w.partitionBy(partition)
         return w.trigger(**trig).start()
 
+    archive = sink(raw.select("topic", "partition", "offset", "timestamp", "key", "value"), "raw_kafka")
     bronze = sink(events.withColumn("dt", F.to_date("event_time")), "bronze_events", "dt")
     silver = sink(
         events.groupBy(F.window("event_time", "1 minute").alias("w"), "wiki")
@@ -74,7 +80,7 @@ def run(a: argparse.Namespace) -> None:
                 "edits", "bot_edits", "bytes_changed", "editors"),
         "silver_wiki_minute")
     dl = sink(dead, "dead_letters")
-    for q in (bronze, silver, dl):
+    for q in (archive, bronze, silver, dl):
         q.awaitTermination() if a.once else None
     if not a.once:
         spark.streams.awaitAnyTermination()
@@ -83,12 +89,14 @@ def run(a: argparse.Namespace) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--bootstrap", default=os.getenv("KAFKA_BOOTSTRAP", "localhost:9092"))
+    ap.add_argument("--topic", default=TOPIC)
     ap.add_argument("--out", default=os.getenv("LAKE_PATH", "lake"))
     ap.add_argument("--checkpoint", default=os.getenv("CHECKPOINT_PATH", "checkpoints"))
     ap.add_argument("--watermark", default="2 minutes", help="how late an event may arrive and still count")
     ap.add_argument("--trigger", default="15 seconds")
     ap.add_argument("--starting-offsets", default="earliest")
     ap.add_argument("--max-offsets", type=int, default=50000)
+    ap.add_argument("--allow-data-loss", action="store_true", help="explicitly allow missing Kafka offsets")
     ap.add_argument("--once", action="store_true", help="process what is available, then stop (used in tests)")
     run(ap.parse_args())
 
