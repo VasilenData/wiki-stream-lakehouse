@@ -42,3 +42,38 @@ jobs:
       - run: bash scripts/start_kafka.sh "$RUNNER_TEMP/kafka"
       - name: End-to-end test (real Kafka and Spark)
         run: KAFKA_BOOTSTRAP=localhost:9092 PYTHONPATH=src pytest -q tests/test_e2e.py
+  broker-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: bash scripts/start_kafka.sh "$RUNNER_TEMP/kafka-outage"
+      - name: Kill and recover the disposable broker with queued traffic
+        env:
+          KAFKA_BOOTSTRAP: localhost:9092
+          KAFKA_OUTAGE_TEST_DIR: ${{ runner.temp }}/kafka-outage
+          WIKISTREAM_RECOVERY_ARTIFACT_DIR: recovery-evidence
+          PYTHONPATH: src
+        run: pytest -q -s tests/test_broker_outage.py
+      - name: Retain original broker diagnostics
+        if: always()
+        run: |
+          mkdir -p recovery-evidence
+          if [ -f "$RUNNER_TEMP/kafka-outage/kafka.log" ]; then
+            cp "$RUNNER_TEMP/kafka-outage/kafka.log" recovery-evidence/original-broker.log
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: broker-recovery-${{ github.sha }}-${{ github.run_attempt }}
+          path: recovery-evidence/
+          if-no-files-found: error
+          retention-days: 30
