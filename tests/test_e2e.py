@@ -99,7 +99,7 @@ def test_inflight_crash_recovery_and_missing_offsets_fail_closed(tmp_path):
     send(initial)
     subprocess.run([*cmd, '--once'], check=True, timeout=600)
     with duckdb.connect() as con:
-        assert con.read_parquet(committed_files(lake / 'raw_kafka')).count('*').fetchone()[0] == len(initial)
+        assert con.read_parquet(committed_files(lake / 'raw_kafka')).count('*').fetchall()[0][0] == len(initial)
     previous = [int(p.name) for p in (checkpoint / 'raw_kafka/commits').iterdir() if p.name.isdigit()]
     next_batch = max(previous) + 1
     new = [encode(make(2000 + i, 'enwiki', BASE + 700)) for i in range(1000)]
