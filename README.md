@@ -73,6 +73,49 @@ After upgrading from the old ID-only deduplication key or the pre-archive output
 
 Tests: `PYTHONPATH=src pytest tests/test_schema.py tests/test_producer.py` (fast) and `KAFKA_BOOTSTRAP=localhost:9092 PYTHONPATH=src pytest tests/test_e2e.py` (real Kafka and Spark).
 
+## Measured broker-outage exercise
+
+The separate CI `broker-recovery` job deliberately kills its disposable Kafka
+3.7.1 process while Spark is running, queues synthetic traffic while the broker
+is unavailable, and restarts the same broker with its existing log directory.
+It keeps the Spark output and checkpoints. If Spark exits, the exercise runner
+performs at most one checkpoint restart and records that action; this is an
+exercise supervisor, not a deployed recovery service.
+
+The fixture sends 28 records: 22 distinct valid events, three intentional
+duplicates within the watermark horizon, and three malformed records. Delivery
+callbacks supply the acknowledged Kafka offsets independently of the sinks.
+The assertions require every acknowledged offset exactly once in the raw
+archive, all 22 accepted keys exactly once in bronze, and exactly the three
+rejected offsets in dead letters. Counts alone cannot hide a missing record
+replaced by a duplicate.
+
+Each run uploads `broker-recovery.json` plus Spark and broker logs as a 30-day
+Actions artifact. The JSON records observed broker downtime, broker restart
+time, time from restart until all expected committed rows are visible, missing
+acknowledged offsets and duplicate counts. Failed exercises retain a failure
+report instead of claiming a recovery time. Consult a successful run's artifact
+for measured numbers; no timing is asserted here before execution.
+
+This is a **single-node, retained-disk process-failure exercise**. It does not
+establish high availability, recovery after disk loss, or lossless Wikimedia SSE
+ingestion. The local producer queue remains alive during the outage, and Kafka
+acknowledgments are the lower bound of the recovery claim. It is separate from
+the Spark in-flight crash test and from historical throughput measurements.
+
+To run locally on Linux with Java 17, use a fresh **disposable** broker directory
+and a free port 9092; the start script initializes that directory's Kafka data:
+
+```bash
+bash scripts/start_kafka.sh "$PWD/.outage-broker"
+KAFKA_BOOTSTRAP=localhost:9092 KAFKA_OUTAGE_TEST_DIR="$PWD/.outage-broker" \
+  WIKISTREAM_RECOVERY_ARTIFACT_DIR=recovery-evidence PYTHONPATH=src \
+  pytest -q -s tests/test_broker_outage.py
+```
+
+The test verifies that the recorded PID belongs to the supplied Kafka config
+before killing it. Do not use a broker or data directory shared with other work.
+
 ## Replay an archived capture
 
 Stop the writer, retain its output and checkpoints, then use a separate Kafka

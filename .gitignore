@@ -10,3 +10,5 @@ spark-warehouse/
 *.tfstate
 *.tfstate.*
 terraform.tfvars
+.outage-broker/
+recovery-evidence/
