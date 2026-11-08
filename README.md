@@ -10,7 +10,7 @@ A local streaming data pipeline for Wikimedia's public recent-change feed. Pytho
 | Problem | How it is handled | Proof |
 |---|---|---|
 | Events arrive late | Event-time processing with a 2-minute watermark; records older than the watermark are dropped before bronze and silver | [Integration test](tests/test_e2e.py) sends late events in a later batch and checks they are excluded |
-| Producer retries and replays create duplicates | Idempotent producer plus `dropDuplicatesWithinWatermark` on the event id, within the retained state | The same test sends 3 duplicates and checks they count once |
+| Producer retries and replays create duplicates | Idempotent producer plus `dropDuplicatesWithinWatermark` on `(wiki, id)`, within the retained state | The same test sends 3 duplicates and deliberately reuses IDs across two wikis |
 | Malformed Kafka messages | Parsing failures go to a dead-letter folder | The test sends 2 malformed messages and checks both land there |
 | Checkpoint reuse | Each Parquet sink resumes its offsets and state from its own checkpoint | The test runs two `--once` invocations with the same checkpoint directory |
 | Proposed AWS cost controls | Lifecycle rules, a per-query Athena scan limit and a budget alert, defined in Terraform | [Configuration](infra/terraform) passes validation in CI; no AWS deployment has been tested |
@@ -48,6 +48,8 @@ Spark advances the watermark between micro-batches, not inside one. An event tha
 
 - **Bronze is an accepted-event layer.** It is not an archive of every raw feed event or Kafka message. The producer skips events it cannot normalize, malformed Kafka messages go to dead letters, and Spark drops duplicates and records older than its watermark before writing bronze.
 - **Deduplication is bounded.** `dropDuplicatesWithinWatermark` keeps state within the configured watermark horizon; the test covers its three injected duplicates, not arbitrary replays after that state has expired.
+- **Event IDs are scoped to a wiki.** The [Wikimedia schema](https://github.com/wikimedia/mediawiki-event-schemas/blob/master/jsonschema/mediawiki/recentchange/current.yaml) identifies `id` as the recent-change ID and `wiki` as the database identity. The deduplication key includes both, so equal numeric IDs on different wikis survive.
+- **Queued is not delivered.** The producer counts delivery callbacks and exits with an error if Kafka reports a delivery failure or messages remain after the final flush. Unit tests inject these outcomes without a broker. This does not make the upstream SSE connection replayable.
 - **Checkpoints belong to each sink.** Reusing them lets the tested two-invocation scenario resume Kafka offsets and state. Bronze, silver and dead letters are separate streaming queries with separate checkpoints, so this is not an atomic commit across all three outputs. Crash recovery during a write is not exercised by the current integration test.
 - **Kafka retention can cause gaps.** The reader currently sets `failOnDataLoss=false` in [job.py](src/wikistream/job.py). If required offsets have expired or a topic is deleted, missing records can be skipped instead of failing the query. The checkpoint-reuse test keeps the required Kafka data available; it does not test retention loss or broker outages.
 - **The live feed is not a durable replay log here.** [producer.py](src/wikistream/producer.py) reconnects to the SSE feed without persisting an event cursor. The measured count match is one observation, not an end-to-end lossless-delivery guarantee through a disconnection.
@@ -64,7 +66,9 @@ PYTHONPATH=src python -m wikistream.job --once       # or without --once to keep
 PYTHONPATH=src python -m wikistream.analytics top_wikis
 ```
 
-Tests: `PYTHONPATH=src pytest tests/test_schema.py` (fast) and `KAFKA_BOOTSTRAP=localhost:9092 PYTHONPATH=src pytest tests/test_e2e.py` (real Kafka and Spark).
+After upgrading from the old ID-only deduplication key, use a **new checkpoint and output directory** together, for example `--checkpoint checkpoints-wiki-id --out lake-wiki-id`. Stateful checkpoint keys changed; do not reuse the previous state or append a replay into its old outputs. The previous directories can be retained for comparison.
+
+Tests: `PYTHONPATH=src pytest tests/test_schema.py tests/test_producer.py` (fast) and `KAFKA_BOOTSTRAP=localhost:9092 PYTHONPATH=src pytest tests/test_e2e.py` (real Kafka and Spark).
 
 ## AWS (Terraform)
 
