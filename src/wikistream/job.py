@@ -2,9 +2,11 @@
 
 Design choices (see README):
 * Event-time windows with a watermark, so late events are handled by a rule, not by luck.
-* `dropDuplicatesWithinWatermark` on the event id, so replays and producer retries do not double count.
+* `dropDuplicatesWithinWatermark` on the event id, with dedupe state bounded by the watermark.
 * Records that fail parsing go to a dead-letter folder instead of crashing or vanishing.
-* Checkpoints + file sinks give end-to-end exactly-once output.
+* Each file sink has its own checkpoint; the integration test covers checkpoint reuse.
+* Bronze follows watermarking/deduplication. Late records are not archived there.
+* `failOnDataLoss=false` allows missing Kafka offsets to be skipped; see README for scope.
 """
 from __future__ import annotations
 
