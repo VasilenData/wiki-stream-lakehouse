@@ -41,7 +41,7 @@ jobs:
       - run: pip install -r requirements.txt
       - run: bash scripts/start_kafka.sh "$RUNNER_TEMP/kafka"
       - name: End-to-end test (real Kafka and Spark)
-        run: KAFKA_BOOTSTRAP=localhost:9092 PYTHONPATH=src pytest -q tests/test_e2e.py
+        run: KAFKA_BOOTSTRAP=127.0.0.1:9092 PYTHONPATH=src pytest -q tests/test_e2e.py
   broker-recovery:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -58,7 +58,7 @@ jobs:
       - run: bash scripts/start_kafka.sh "$RUNNER_TEMP/kafka-outage"
       - name: Kill and recover the disposable broker with queued traffic
         env:
-          KAFKA_BOOTSTRAP: localhost:9092
+          KAFKA_BOOTSTRAP: 127.0.0.1:9092
           KAFKA_OUTAGE_TEST_DIR: ${{ runner.temp }}/kafka-outage
           WIKISTREAM_RECOVERY_ARTIFACT_DIR: recovery-evidence
           PYTHONPATH: src
