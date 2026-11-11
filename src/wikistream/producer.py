@@ -15,25 +15,64 @@ URL = "https://stream.wikimedia.org/v2/stream/recentchange"
 log = logging.getLogger("producer")
 
 
+class OversizedEvent(ValueError):
+    """The decoded SSE data buffer exceeded its documented limit."""
+
+
+def sse_data(lines, max_event_bytes: int = 1024 * 1024):
+    """Yield complete data frames; EOF never dispatches an unterminated event.
+
+    Implements the WHATWG data-field framing subset. Event IDs/retry fields are
+    intentionally ignored: this client does not implement a durable SSE cursor.
+    """
+    if max_event_bytes <= 0:
+        raise ValueError("max_event_bytes must be positive")
+    data, size = [], 0
+    for index, line in enumerate(lines):
+        if index == 0:
+            line = line.removeprefix("\ufeff")
+        if line == "":
+            if data:
+                yield "\n".join(data)
+            data, size = [], 0
+            continue
+        if line.startswith(":"):
+            continue
+        field, _, value = line.partition(":")
+        if value.startswith(" "):
+            value = value[1:]
+        if field == "data":
+            size += len(value.encode("utf-8")) + 1
+            if size > max_event_bytes:
+                raise OversizedEvent(f"SSE event exceeds {max_event_bytes} decoded bytes")
+            data.append(value)
+
+
 def stream_events(url: str = URL):
-    """Yield raw events; reconnect with backoff because SSE connections are dropped regularly."""
-    headers = {"User-Agent": os.getenv("WIKI_UA", "wikistream-portfolio/1.0 (https://github.com/VasilenData)")}
+    """Parse framed UTF-8 events; back off on errors and empty/closed streams."""
+    headers = {"User-Agent": os.getenv("WIKI_UA", "wikistream-portfolio/1.0 (https://github.com/VasilenData)"),
+               "Accept": "text/event-stream"}
     backoff = 1
     while True:
         try:
             with requests.get(url, stream=True, headers=headers, timeout=(10, 60)) as r:
                 r.raise_for_status()
-                backoff = 1
-                for line in r.iter_lines(decode_unicode=True):
-                    if line and line.startswith("data:"):
-                        try:
-                            yield json.loads(line[5:])
-                        except json.JSONDecodeError:
-                            continue
-        except requests.RequestException as exc:
-            log.warning("stream dropped (%s); retrying in %ss", exc, backoff)
-            time.sleep(backoff)
-            backoff = min(backoff * 2, 30)
+                if r.status_code == 204:
+                    return  # The server explicitly requested that this client stop.
+                r.encoding = "utf-8"  # SSE always uses UTF-8, regardless of HTTP defaults.
+                for payload in sse_data(r.iter_lines(decode_unicode=True)):
+                    try:
+                        record = json.loads(payload)
+                    except json.JSONDecodeError:
+                        log.warning("skipping malformed JSON SSE event")
+                        continue
+                    backoff = 1  # A successful HTTP handshake alone is not progress.
+                    yield record
+        except (requests.RequestException, OversizedEvent) as exc:
+            log.warning("stream dropped (%s)", exc)
+        log.info("stream closed; retrying in %ss", backoff)
+        time.sleep(backoff)
+        backoff = min(backoff * 2, 30)
 
 
 def publish(events, producer, seconds: int = 0) -> dict:
