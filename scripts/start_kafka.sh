@@ -16,12 +16,13 @@ if [ ! -d "kafka_2.13-$VER" ]; then
   [ -d "kafka_2.13-$VER" ] || { echo "Could not download Kafka $VER" >&2; exit 1; }
 fi
 K="$DIR/kafka_2.13-$VER"
+# Keep Java listeners and native clients on the same loopback address family.
 cat > kraft.properties <<CFG
 process.roles=broker,controller
 node.id=1
-controller.quorum.voters=1@localhost:9093
-listeners=PLAINTEXT://localhost:9092,CONTROLLER://localhost:9093
-advertised.listeners=PLAINTEXT://localhost:9092
+controller.quorum.voters=1@127.0.0.1:9093
+listeners=PLAINTEXT://127.0.0.1:9092,CONTROLLER://127.0.0.1:9093
+advertised.listeners=PLAINTEXT://127.0.0.1:9092
 controller.listener.names=CONTROLLER
 inter.broker.listener.name=PLAINTEXT
 listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
@@ -36,7 +37,7 @@ rm -rf "$DIR/data"
 KAFKA_HEAP_OPTS="-Xmx1g" nohup "$K/bin/kafka-server-start.sh" "$DIR/kraft.properties" > kafka.log 2>&1 < /dev/null &
 echo "$!" > kafka.pid
 for _ in $(seq 1 60); do
-  "$K/bin/kafka-topics.sh" --bootstrap-server localhost:9092 --list >/dev/null 2>&1 && { echo "Kafka is up on localhost:9092"; exit 0; }
+  "$K/bin/kafka-topics.sh" --bootstrap-server 127.0.0.1:9092 --list >/dev/null 2>&1 && { echo "Kafka is up on 127.0.0.1:9092"; exit 0; }
   sleep 2
 done
 echo "Kafka did not start; see $DIR/kafka.log" >&2; exit 1
