@@ -49,11 +49,14 @@ def test_broker_outage_recovers_acknowledged_records(tmp_path):
     assert 'kafka.Kafka' in command_line and str(config) in command_line, 'PID is not this test broker'
     server = directory / 'kafka_2.13-3.7.1/bin/kafka-server-start.sh'
     assert server.is_file() and config.is_file()
-    bootstrap = os.environ.get('KAFKA_BOOTSTRAP', 'localhost:9092')
+    bootstrap = os.environ.get('KAFKA_BOOTSTRAP', '127.0.0.1:9092')
     topic = 'wikistream-broker-outage'
-    admin = AdminClient({'bootstrap.servers': bootstrap, 'socket.timeout.ms': 1000})
+    # Metadata outage probes use their own short timeout below. Do not make
+    # initial controller discovery and topic propagation share a one-second budget.
+    admin = AdminClient({'bootstrap.servers': bootstrap})
     assert topic not in admin.list_topics(timeout=10).topics, 'use a newly initialized disposable broker'
-    admin.create_topics([NewTopic(topic, 1, 1)])[topic].result()
+    admin.create_topics([NewTopic(topic, 1, 1)], operation_timeout=10,
+                        request_timeout=15)[topic].result(timeout=20)
     evidence_dir = Path(os.getenv('WIKISTREAM_RECOVERY_ARTIFACT_DIR', str(tmp_path / 'evidence')))
     evidence_dir.mkdir(parents=True, exist_ok=True)
     report = {'schema_version': 1, 'status': 'failed',

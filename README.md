@@ -32,7 +32,7 @@ flowchart TD
 
 ## Measured results
 
-Historical run, before raw archival and commit-aware reading were added: a 17-core cloud VM with a single Kafka broker, Spark in local mode with 2 threads, on the live feed (2026-10-31):
+Historical run, before raw archival and commit-aware reading were added: a 17-core cloud VM with a single Kafka broker, Spark in local mode with 2 threads, on the live feed (2026-10-31). These are self-recorded observations; the original run log, input capture and machine-readable measurement artifact are not retained in this repository, so the counts and timings cannot be independently rechecked from the committed files:
 
 * The producer sent **5,897 events in 200 seconds (29.5 per second)** and skipped 67 unusable events.
 * The Spark job read all of it in one pass in **about 11 seconds** once Spark had started.
